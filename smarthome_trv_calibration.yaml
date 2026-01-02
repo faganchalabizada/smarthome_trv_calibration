@@ -1,8 +1,6 @@
 blueprint:
   name: TRV calibration via external temperature
-  description: >
-    Sync TRV local temperature with external room sensor
-    using local_temperature_calibration (Zigbee2MQTT)
+  description: 'Sync TRV local temperature with external room sensor using local_temperature_calibration (Zigbee2MQTT)'
   domain: automation
 
   input:
