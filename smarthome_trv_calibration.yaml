@@ -24,7 +24,7 @@ blueprint:
 
     trv_mqtt_topic:
       name: TRV Zigbee2MQTT topic (without /set)
-      description: Example: zigbee2mqtt/TRV_BEDROOM
+      description: 'Example: zigbee2mqtt/TRV_BEDROOM'
       selector:
         text:
 
