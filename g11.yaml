@@ -1,0 +1,93 @@
+blueprint:
+  name: Z2M TRV Calibration (via Number Entity)
+  description: Автоматическая калибровка термоголовки через сущность Number (для Zigbee2MQTT)
+  domain: automation
+
+  input:
+    room_temp_sensor:
+      name: Внешний датчик температуры
+      description: Датчик, по которому будет равняться термоголовка (например, Xiaomi или Aqara)
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    trv_climate:
+      name: Термоголовка (Climate)
+      description: Основная сущность управления климатом
+      selector:
+        entity:
+          domain: climate
+    trv_calibration_number:
+      name: Сущность калибровки (Number)
+      description: Выберите сущность number.xxx_local_temperature_calibration
+      selector:
+        entity:
+          domain: number
+    min_delta_step:
+      name: Минимальный порог срабатывания
+      description: Не калибровать, если разница меньше этого значения (экономит батарейки)
+      default: 0.3
+      selector:
+        number:
+          min: 0.1
+          max: 1.0
+          step: 0.1
+    min_calibration:
+      name: Минимальный предел калибровки
+      default: -5
+      selector:
+        number:
+          min: -10
+          max: 0
+          step: 0.5
+    max_calibration:
+      name: Максимальный предел калибровки
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.5
+
+mode: single
+
+trigger:
+  - platform: state
+    entity_id: !input room_temp_sensor
+  - platform: state
+    entity_id: !input trv_climate
+    attribute: local_temperature
+
+action:
+  - variables:
+      # Назначаем переменные из входов
+      room_sensor: !input room_temp_sensor
+      trv_entity: !input trv_climate
+      cal_number: !input trv_calibration_number
+      min_step: !input min_delta_step
+      min_limit: !input min_calibration
+      max_limit: !input max_calibration
+
+      # Получаем текущие показатели
+      t_room: "{{ states(room_sensor) | float(0) }}"
+      t_trv: "{{ state_attr(trv_entity, 'local_temperature') | float(0) }}"
+      current_offset: "{{ states(cal_number) | float(0) }}"
+
+      # ФОРМУЛА:
+      # Новая калибровка = (Реальная Т - Т которую видит ТРВ) + Текущая калибровка
+      # Округляем до 1 знака, так как Z2M обычно понимает шаг 0.5 или 0.1
+      calculated_offset: "{{ (t_room - t_trv + current_offset) | round(1) }}"
+      
+      # Ограничиваем результат лимитами (например, от -5 до 5)
+      final_offset: "{{ calculated_offset | clamp(min_limit, max_limit) }}"
+
+  # Проверяем: нужно ли обновлять? (Если изменение больше порога min_delta_step)
+  - condition: template
+    value_template: "{{ (final_offset - current_offset) | abs >= min_step | float }}"
+
+  # Устанавливаем новое значение калибровки
+  - service: number.set_value
+    target:
+      entity_id: !input trv_calibration_number
+    data:
+      value: "{{ final_offset }}"
