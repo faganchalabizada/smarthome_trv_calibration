@@ -1,0 +1,116 @@
+blueprint:
+  name: Z2M TRV Calibration (Dual Trigger + Anti-Bounce)
+  description: Калибровка по двум датчикам с защитой от лишних срабатываний
+  domain: automation
+
+  input:
+    room_temp_sensor:
+      name: Внешний датчик температуры
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    trv_climate:
+      name: Термоголовка (Climate)
+      selector:
+        entity:
+          domain: climate
+    trv_calibration_number:
+      name: Сущность калибровки (Number)
+      selector:
+        entity:
+          domain: number
+    min_delta_step:
+      name: Минимальный шаг срабатывания
+      default: 0.3
+      selector:
+        number:
+          min: 0.1
+          max: 1.0
+          step: 0.1
+    min_calibration:
+      name: Минимальный предел калибровки
+      default: -5
+      selector:
+        number:
+          min: -10
+          max: 0
+          step: 0.5
+    max_calibration:
+      name: Максимальный предел калибровки
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 10
+          step: 0.5
+    debug_mode:
+      name: Включить отладку
+      default: false
+      selector:
+        boolean:
+
+# 'single' не дает запустить вторую копию, пока работает первая.
+# 'delay' в конце заставит автоматизацию "висеть" активной, блокируя повторы.
+mode: single
+
+trigger:
+  - platform: state
+    entity_id: !input room_temp_sensor
+  - platform: state
+    entity_id: !input trv_climate
+    attribute: current_temperature
+
+action:
+  - variables:
+      room_sensor: !input room_temp_sensor
+      trv_entity: !input trv_climate
+      cal_number: !input trv_calibration_number
+      min_step: !input min_delta_step
+      min_limit: !input min_calibration
+      max_limit: !input max_calibration
+      debug: !input debug_mode
+
+      t_room: "{{ states(room_sensor) | float(none) }}"
+      t_trv: "{{ state_attr(trv_entity, 'current_temperature') | float(none) }}"
+      current_offset: "{{ states(cal_number) | float(none) }}"
+
+  # Проверка адекватности данных
+  - condition: template
+    value_template: >
+      {{ t_room is not none and t_trv is not none and current_offset is not none 
+         and t_room > 5 and t_trv > 5 }}
+
+  - variables:
+      calculated_offset: "{{ (t_room - t_trv + current_offset) | round(1) }}"
+      final_offset: "{{ calculated_offset | clamp(min_limit, max_limit) }}"
+      difference: "{{ (final_offset - current_offset) | abs }}"
+
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ debug }}"
+        sequence:
+          - service: persistent_notification.create
+            data:
+              title: "Отладка: {{ state_attr(trv_entity, 'friendly_name') }}"
+              message: >
+                Комната: {{ t_room }}°C | ТРВ: {{ t_trv }}°C
+                Оффсет: {{ current_offset }} -> {{ final_offset }}
+                Результат: {{ 'ОБНОВЛЯЮ' if difference >= min_step|float else 'МАЛОЕ ИЗМЕНЕНИЕ' }}
+
+  # Проверяем: нужно ли обновлять?
+  - condition: template
+    value_template: "{{ difference >= min_step | float }}"
+
+  # Устанавливаем новое значение
+  - service: number.set_value
+    target:
+      entity_id: !input trv_calibration_number
+    data:
+      value: "{{ final_offset }}"
+
+  # --- ЗАЩИТА ОТ ДВОЙНОГО СРАБАТЫВАНИЯ ---
+  # Ждем 10 секунд после отправки команды. 
+  # Так как mode: single, любые триггеры в это время будут проигнорированы.
+  - delay: 00:00:10
